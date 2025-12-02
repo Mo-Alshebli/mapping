@@ -31,6 +31,7 @@ class MapboxViewState extends State<MapboxView> {
   PointAnnotationManager? _pointManager;
   PointAnnotationManager? _centerPointManager;
   CircleAnnotationManager? _labelCircleManager; // For stable parcel labels
+  PointAnnotationManager? _labelTextManager; // For stable text labels
 
   // Drawing state
   final List<Position> _drawingPoints = [];
@@ -1104,6 +1105,26 @@ class MapboxViewState extends State<MapboxView> {
         );
 
         await _labelCircleManager?.create(circleOptions);
+
+        // Add text label next to the circle
+        if (_labelTextManager != null) {
+          final textOptions = PointAnnotationOptions(
+            geometry: Point(
+              coordinates: Position(
+                parcel.centroid.longitude,
+                parcel.centroid.latitude,
+              ),
+            ),
+            textField: parcel.name,
+            textSize: 14.0,
+            textColor: Colors.white.toARGB32(),
+            textHaloColor: Colors.black.toARGB32(),
+            textHaloWidth: 2.0,
+            textAnchor: TextAnchor.LEFT,
+            textOffset: [1.5, 0.0], // Offset to the right of the circle
+          );
+          await _labelTextManager?.create(textOptions);
+        }
       } catch (e) {
         print('Error creating label for ${parcel.name}: $e');
       }
