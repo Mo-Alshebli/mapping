@@ -9,7 +9,9 @@ import 'parcel_detail_screen.dart';
 
 /// Screen for managing land parcels (list, search, delete)
 class ParcelsListScreen extends StatefulWidget {
-  const ParcelsListScreen({super.key});
+  final Function(LandParcel)? onNavigateToParcel;
+
+  const ParcelsListScreen({super.key, this.onNavigateToParcel});
 
   @override
   State<ParcelsListScreen> createState() => _ParcelsListScreenState();
@@ -255,95 +257,72 @@ class _ParcelsListScreenState extends State<ParcelsListScreen> {
   ) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
+      elevation: 3,
+      shadowColor: AppColors.primary.withOpacity(0.2),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: AppColors.primary.withOpacity(0.1),
+          width: 1,
+        ),
       ),
       child: InkWell(
         onTap: () => _openParcelDetail(context, parcel),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Icon/Shape indicator
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  _getShapeIcon(parcel),
-                  color: AppColors.primary,
-                  size: 28,
-                ),
-              ),
-              const SizedBox(width: 16),
-
-              // Details
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      parcel.name,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+              // Header with name and actions
+              Row(
+                children: [
+                  // Icon
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          AppColors.primary,
+                          AppColors.primary.withOpacity(0.7),
+                        ],
                       ),
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    const SizedBox(height: 4),
-                    Row(
+                    child: Icon(
+                      _getShapeIcon(parcel),
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+
+                  // Name
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(Icons.square_foot,
-                            size: 14, color: Colors.grey[600]),
-                        const SizedBox(width: 4),
                         Text(
-                          _formatArea(parcel.area),
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey[600],
+                          parcel.name,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                        if (parcel.cropType != null) ...[
-                          const SizedBox(width: 12),
-                          Icon(Icons.grass, size: 14, color: Colors.grey[600]),
-                          const SizedBox(width: 4),
-                          Text(
-                            parcel.cropType!,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.grey[600],
-                            ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _formatDate(parcel.createdAt),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[500],
                           ),
-                        ],
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _formatDate(parcel.createdAt),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[500],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Actions
-              Column(
-                children: [
-                  // Go to map
-                  IconButton(
-                    icon: const Icon(Icons.map_outlined),
-                    color: AppColors.primary,
-                    tooltip: 'عرض على الخريطة',
-                    onPressed: () => _goToParcelOnMap(context, parcel),
                   ),
-                  // Delete
+
+                  // Delete button
                   IconButton(
                     icon: const Icon(Icons.delete_outline),
                     color: Colors.red[400],
@@ -352,9 +331,88 @@ class _ParcelsListScreenState extends State<ParcelsListScreen> {
                   ),
                 ],
               ),
+
+              const Divider(height: 24),
+
+              // Information chips
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _buildInfoChip(
+                    icon: Icons.square_foot,
+                    label: _formatArea(parcel.area),
+                    color: Colors.blue,
+                  ),
+                  if (parcel.cropType != null)
+                    _buildInfoChip(
+                      icon: Icons.grass,
+                      label: parcel.cropType!,
+                      color: Colors.green,
+                    ),
+                  _buildInfoChip(
+                    icon: Icons.location_on,
+                    label: '${parcel.coordinates.length} نقاط',
+                    color: Colors.orange,
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 12),
+
+              // View on map button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => _goToParcelOnMap(context, parcel),
+                  icon: const Icon(Icons.map, size: 20),
+                  label: const Text('عرض على الخريطة'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildInfoChip({
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: color.withOpacity(0.3),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              color: color.withOpacity(0.9),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -388,9 +446,13 @@ class _ParcelsListScreenState extends State<ParcelsListScreen> {
   }
 
   void _goToParcelOnMap(BuildContext context, LandParcel parcel) {
-    final mapState = context.read<MapStateProvider>();
-    mapState.focusOnParcel(parcel);
-    Navigator.pop(context); // Return to map
+    // Navigate back to map screen
+    Navigator.pop(context);
+
+    // If callback is provided, use it to navigate to parcel
+    if (widget.onNavigateToParcel != null) {
+      widget.onNavigateToParcel!(parcel);
+    }
   }
 
   void _confirmDelete(
@@ -429,8 +491,3 @@ class _ParcelsListScreenState extends State<ParcelsListScreen> {
     );
   }
 }
-
-
-
-
-

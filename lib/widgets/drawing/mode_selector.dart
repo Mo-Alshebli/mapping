@@ -117,6 +117,45 @@ class DrawingModeSelector extends StatelessWidget {
             // If predefined shape mode, show shape selector
             if (mode == DrawingMode.predefinedShape) {
               _showShapeSelector(context);
+            } else {
+              // For custom points and freehand, start drawing immediately
+              drawingProvider.startDrawing();
+
+              // Show instructions based on mode
+              String message = '';
+              IconData icon = Icons.edit;
+              Color color = AppColors.primary;
+
+              if (mode == DrawingMode.customPoints) {
+                message =
+                    'اضغط على الخريطة لإضافة النقاط • يجب 3 نقاط على الأقل';
+                icon = Icons.timeline;
+                color = Colors.purple;
+              } else if (mode == DrawingMode.freehand) {
+                message = 'اسحب إصبعك على الخريطة للرسم الحر';
+                icon = Icons.gesture;
+                color = Colors.teal;
+              }
+
+              if (message.isNotEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Row(
+                      children: [
+                        Icon(icon, color: Colors.white, size: 20),
+                        const SizedBox(width: 12),
+                        Expanded(child: Text(message)),
+                      ],
+                    ),
+                    duration: const Duration(seconds: 4),
+                    backgroundColor: color,
+                    behavior: SnackBarBehavior.floating,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                );
+              }
             }
           },
           borderRadius: BorderRadius.circular(16),

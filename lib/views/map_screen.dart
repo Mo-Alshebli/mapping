@@ -8,7 +8,6 @@ import '../providers/location_provider.dart';
 import '../utils/constants.dart';
 import '../utils/colors.dart';
 import '../utils/draw_shape.dart';
-import '../utils/drawing_mode.dart';
 import '../widgets/map/mapbox_view.dart';
 import '../widgets/drawing/mode_selector.dart';
 import '../widgets/drawing/drawing_toolbar.dart';
@@ -94,12 +93,6 @@ class _MapScreenState extends State<MapScreen> {
             tooltip: AppStrings.myParcels,
             onPressed: _showParcelsList,
           ),
-          // Map settings
-          IconButton(
-            icon: const Icon(Icons.tune),
-            tooltip: 'إعدادات الخريطة',
-            onPressed: _showMapSettings,
-          ),
         ],
       ),
       body: Stack(
@@ -164,181 +157,14 @@ class _MapScreenState extends State<MapScreen> {
       backgroundColor: Colors.transparent,
       builder: (context) => const DrawingModeSelector(),
     ).then((_) {
-      // After mode selected, start drawing
-      final drawing = context.read<DrawingProvider>();
-      final requiresShapeSelection =
-          drawing.currentMode == DrawingMode.predefinedShape &&
-              drawing.selectedPredefinedShape == null;
-
-      if (!requiresShapeSelection) {
-        _startDrawingWithMode();
-      }
+      // Mode selector now handles starting drawing for each mode
+      // No additional action needed here
     });
-  }
-
-  /// Start drawing with selected mode
-  void _startDrawingWithMode() {
-    final drawing = context.read<DrawingProvider>();
-    drawing.startDrawing();
-
-    String message = 'اضغط على الخريطة لتحديد النقاط';
-
-    if (drawing.currentMode == DrawingMode.predefinedShape) {
-      message = drawing.selectedPredefinedShape?.instructions ?? message;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(seconds: 4),
-        backgroundColor: AppColors.primary,
-      ),
-    );
   }
 
   Widget _buildMapPlaceholder() {
     // Using actual Mapbox map now
     return MapboxView(key: _mapboxKey);
-  }
-
-  void _showMapSettings() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 16,
-            right: 16,
-            top: 24,
-            bottom: MediaQuery.of(sheetContext).padding.bottom + 24,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    margin: const EdgeInsets.only(bottom: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                const Text(
-                  'إعدادات الخريطة',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                Consumer<MapStateProvider>(
-                  builder: (context, mapState, _) {
-                    return Column(
-                      children: [
-                        SwitchListTile(
-                          value: mapState.isSatelliteView,
-                          title: const Text('عرض الأقمار الصناعية'),
-                          subtitle:
-                              const Text('تبديل بين خريطة الأقمار والشوارع'),
-                          onChanged: (_) => mapState.toggleMapStyle(),
-                        ),
-                        SwitchListTile(
-                          value: mapState.showNDVILayers,
-                          title: const Text('طبقات NDVI'),
-                          subtitle: const Text('عرض صحة المحاصيل على الخريطة'),
-                          onChanged: (_) => mapState.toggleNDVILayers(),
-                        ),
-                        SwitchListTile(
-                          value: mapState.showLabels,
-                          title: const Text('إظهار العلامات'),
-                          subtitle:
-                              const Text('إظهار أسماء الحقول على الخريطة'),
-                          onChanged: (_) => mapState.toggleLabels(),
-                        ),
-                        SwitchListTile(
-                          value: mapState.showCharts,
-                          title: const Text('إظهار الرسوم'),
-                          subtitle: const Text(
-                              'إظهار المؤشرات فوق قطع الأراضي المحفوظة'),
-                          onChanged: (_) => mapState.toggleCharts(),
-                        ),
-                        const Divider(),
-                        ListTile(
-                          leading: const Icon(Icons.refresh),
-                          title: const Text('إعادة تعيين الكاميرا'),
-                          subtitle: const Text('العودة إلى الموقع الافتراضي'),
-                          onTap: () {
-                            mapState.reset();
-                            Navigator.pop(sheetContext);
-                          },
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 8),
-                Consumer<LocationProvider>(
-                  builder: (context, location, _) {
-                    return ListTile(
-                      leading: const Icon(Icons.my_location),
-                      title: const Text('الانتقال إلى موقعي'),
-                      subtitle: const Text('يحتاج تفعيل خدمة الموقع'),
-                      onTap: location.isLoading
-                          ? null
-                          : () async {
-                              await _goToCurrentLocation();
-                              if (context.mounted) {
-                                Navigator.pop(sheetContext);
-                              }
-                            },
-                    );
-                  },
-                ),
-                Consumer<DrawingProvider>(
-                  builder: (context, drawing, _) {
-                    return ListTile(
-                      leading: const Icon(Icons.layers_clear),
-                      title: const Text('مسح الرسم الحالي'),
-                      onTap: () {
-                        drawing.reset();
-                        Navigator.pop(sheetContext);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('تم إلغاء وضع الرسم'),
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(sheetContext);
-                    _showDrawingModeSelector();
-                  },
-                  icon: const Icon(Icons.edit),
-                  label: const Text('ابدأ الرسم الآن'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
   }
 
   Future<void> _completeDrawing(DrawingProvider drawing) async {
@@ -451,7 +277,15 @@ class _MapScreenState extends State<MapScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => const ParcelsListScreen(),
+        builder: (context) => ParcelsListScreen(
+          onNavigateToParcel: (parcel) {
+            // Move camera to parcel when user clicks "View on Map"
+            _mapboxKey.currentState?.moveCamera(
+              parcel.centroid,
+              zoom: 17,
+            );
+          },
+        ),
       ),
     );
   }

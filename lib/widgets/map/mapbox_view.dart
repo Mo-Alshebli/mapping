@@ -53,8 +53,13 @@ class MapboxViewState extends State<MapboxView> {
             final initialCenter = location.currentLatLng ?? mapState.center;
             final initialZoom = mapState.zoom;
 
+            // Use styleUri as key to force rebuild when style changes
+            final styleUri = mapState.isSatelliteView
+                ? MapboxConfig.satelliteStreets
+                : MapboxConfig.streets;
+
             return MapWidget(
-              key: const ValueKey("mapWidget"),
+              key: ValueKey(styleUri), // Force rebuild on style change
               // Only set camera on first creation - don't reset on rebuild
               cameraOptions: _mapboxMap == null
                   ? CameraOptions(
@@ -67,23 +72,10 @@ class MapboxViewState extends State<MapboxView> {
                       zoom: initialZoom,
                     )
                   : null, // Don't reset camera after initial creation
-              styleUri: mapState.isSatelliteView
-                  ? MapboxConfig.satelliteStreets
-                  : MapboxConfig.streets,
+              styleUri: styleUri,
               textureView: true,
               onMapCreated: _onMapCreated,
-              onTapListener: (context) {
-                // Check if user tapped on a parcel
-                final tappedPoint = LatLngPoint(
-                  latitude: context.point.coordinates.lat.toDouble(),
-                  longitude: context.point.coordinates.lng.toDouble(),
-                );
-                _findParcelAtLatLng(tappedPoint).then((parcel) {
-                  if (parcel != null && mounted) {
-                    _showParcelDetails(parcel);
-                  }
-                });
-              },
+              onTapListener: _onMapTapped,
             );
           },
         ),
@@ -331,6 +323,8 @@ class MapboxViewState extends State<MapboxView> {
         await _mapboxMap?.annotations.createPointAnnotationManager();
     _labelCircleManager =
         await _mapboxMap?.annotations.createCircleAnnotationManager();
+    _labelTextManager =
+        await _mapboxMap?.annotations.createPointAnnotationManager();
 
     // Load existing parcels
     _loadExistingParcels();
@@ -341,10 +335,8 @@ class MapboxViewState extends State<MapboxView> {
       drawingProvider.addListener(_onDrawingStateChanged);
       drawingProvider.addListener(_onDrawingDataChanged);
     }
-    // Note: 3D terrain requires additional configuration
-    // Will be added in future updates
 
-    // Zoom to current location on startup
+    // Move to current location on startup
     if (mounted) {
       final locationProvider = context.read<LocationProvider>();
       final position = await locationProvider.getCurrentLocation();
@@ -368,27 +360,23 @@ class MapboxViewState extends State<MapboxView> {
     _updateMapGestures(shouldFreeze);
   }
 
-  DateTime? _lastVisualUpdate;
-  static const _visualUpdateInterval =
-      Duration(milliseconds: 32); // Cap at ~30fps
-
+  /// Handles all drawing visual updates when DrawingProvider state changes
+  /// Throttled to 30fps to prevent performance issues
   void _onDrawingDataChanged() {
     if (!mounted) return;
+
     final drawingProvider = context.read<DrawingProvider>();
+
+    // Reset freehand state when not drawing
     if (!drawingProvider.isDrawing) {
       _isFreehandDrawing = false;
       _lastFreehandPoint = null;
-    }
-
-    // Throttle visual updates to prevent ANR
-    final now = DateTime.now();
-    if (_lastVisualUpdate != null &&
-        now.difference(_lastVisualUpdate!) < _visualUpdateInterval) {
+      _clearDrawingVisuals();
       return;
     }
-    _lastVisualUpdate = now;
 
-    _syncDrawingVisuals(drawingProvider);
+    // Update visuals with throttling
+    _updateDrawingVisualsThrottled(drawingProvider);
   }
 
   void _updateMapGestures(bool shouldFreeze) async {
@@ -408,75 +396,66 @@ class MapboxViewState extends State<MapboxView> {
     );
   }
 
-  // Throttling for gesture updates
+  // Throttle gesture updates to 60fps for smoothness
   DateTime? _lastGestureUpdate;
-  static const _gestureUpdateInterval =
-      Duration(milliseconds: 16); // ~60 updates/sec for smoothness
+  static const _gestureUpdateInterval = Duration(milliseconds: 16);
   double _previousRotation = 0;
 
+  /// Handles pinch, rotate, and pan gestures for shape manipulation
+  /// Only active when map is frozen and we have a shape to manipulate
   void _handleScaleUpdate(
       ScaleUpdateDetails details, BuildContext context) async {
     final drawingProvider = context.read<DrawingProvider>();
 
-    // Throttle updates to prevent lag
+    // Throttle to prevent lag
     final now = DateTime.now();
     if (_lastGestureUpdate != null &&
         now.difference(_lastGestureUpdate!) < _gestureUpdateInterval) {
-      return; // Skip this update
+      return;
     }
     _lastGestureUpdate = now;
 
-    // Only handle shape gestures if map is frozen and we have content
-    if (drawingProvider.isMapFrozen &&
-        (drawingProvider.currentMode == DrawingMode.predefinedShape ||
-            drawingProvider.currentPoints.isNotEmpty)) {
-      // Handle Scaling (Pinch) - works for all shapes
-      if ((details.scale - 1.0).abs() > 0.01) {
-        // Use smoother scale factor
-        final scaleDiff = details.scale - 1.0;
-        final factor =
-            1.0 + (scaleDiff * 0.08); // Increased responsiveness (was 0.05)
+    // Only handle if map is frozen and we have content
+    if (!drawingProvider.isMapFrozen ||
+        (drawingProvider.currentMode != DrawingMode.predefinedShape &&
+            drawingProvider.currentPoints.isEmpty)) {
+      return;
+    }
 
-        if (factor != 1.0) {
-          // Don't add to history during continuous gesture
-          drawingProvider.scaleShape(factor, addToHistory: false);
-        }
+    // Handle Scaling (Pinch)
+    if ((details.scale - 1.0).abs() > 0.01) {
+      final scaleDiff = details.scale - 1.0;
+      final factor = 1.0 + (scaleDiff * 0.08);
+      if (factor != 1.0) {
+        drawingProvider.scaleShape(factor, addToHistory: false);
       }
+    }
 
-      // Handle rotation
-      final rotationDelta = details.rotation - _previousRotation;
-      if (rotationDelta.abs() > 0.005) {
-        drawingProvider.rotateShape(rotationDelta * 180 / math.pi,
-            addToHistory: false);
-        _previousRotation = details.rotation;
+    // Handle Rotation
+    final rotationDelta = details.rotation - _previousRotation;
+    if (rotationDelta.abs() > 0.005) {
+      drawingProvider.rotateShape(rotationDelta * 180 / math.pi,
+          addToHistory: false);
+      _previousRotation = details.rotation;
+    }
+
+    // Handle Panning (Move) - only when not pinching
+    if (details.scale > 0.95 && details.scale < 1.05) {
+      const sensitivity = 1.5;
+      final dxMeters = details.focalPointDelta.dx * sensitivity;
+      final dyMeters = -details.focalPointDelta.dy * sensitivity;
+
+      if (dxMeters.abs() > 0.01 || dyMeters.abs() > 0.01) {
+        drawingProvider.moveShape(dxMeters, dyMeters, addToHistory: false);
       }
-
-      // Handle Panning (Move) - only when not pinching
-      if (details.scale > 0.95 && details.scale < 1.05) {
-        // Sensitivity based on shape type
-        const sensitivity =
-            1.5; // Increased sensitivity (was 1.0) for easier movement
-        final dxMeters = details.focalPointDelta.dx * sensitivity;
-        final dyMeters = -details.focalPointDelta.dy * sensitivity;
-
-        if (dxMeters.abs() > 0.01 || dyMeters.abs() > 0.01) {
-          drawingProvider.moveShape(dxMeters, dyMeters, addToHistory: false);
-        }
-      }
-
-      // Note: We removed the direct calls to _updateDrawingVisuals here
-      // The DrawingProvider.notifyListeners() will trigger _onDrawingDataChanged
-      // which handles the visual update. This prevents double-rendering.
     }
   }
 
   void _handleScaleEnd(ScaleEndDetails details) {
     _previousRotation = 0;
-    // Force a final update to ensure the shape is in the correct position and high quality
     if (mounted) {
       final drawingProvider = context.read<DrawingProvider>();
       drawingProvider.finalizeShape();
-      // _syncDrawingVisuals will be triggered by notifyListeners in finalizeShape
     }
   }
 
@@ -540,7 +519,7 @@ class MapboxViewState extends State<MapboxView> {
     if (dxMeters.abs() < 0.01 && dyMeters.abs() < 0.01) return;
 
     drawing.moveShape(dxMeters, dyMeters);
-    _updateDrawingVisuals(drawing);
+    _updateDrawingVisualsThrottled(drawing);
     _updateCenterMarker(drawing);
   }
 
@@ -590,7 +569,7 @@ class MapboxViewState extends State<MapboxView> {
 
       drawing.addPoint(latLng);
       _lastFreehandPoint = latLng;
-      _updateDrawingVisuals(drawing);
+      _updateDrawingVisualsThrottled(drawing);
     }).catchError((_) {});
   }
 
@@ -625,7 +604,7 @@ class MapboxViewState extends State<MapboxView> {
     } else {
       // Custom points or freehand mode
       drawingProvider.addPoint(latLng);
-      _updateDrawingVisuals(drawingProvider, force: true);
+      _updateDrawingVisualsThrottled(drawingProvider, force: true);
       _updateCenterMarker(drawingProvider);
     }
   }
@@ -640,7 +619,7 @@ class MapboxViewState extends State<MapboxView> {
       provider.setShapeCenter(latLng);
       provider.createDefaultPredefinedShapePreview();
       _updateCenterMarker(provider);
-      _updateDrawingVisuals(provider, force: true);
+      _updateDrawingVisualsThrottled(provider, force: true);
       _showInfo(
           'استخدم أصابعك للتكبير/التصغير والتحريك، ثم اضغط "إكمال" للحفظ');
     }
@@ -657,12 +636,16 @@ class MapboxViewState extends State<MapboxView> {
     );
   }
 
-  // Throttling for drawing updates
+  // Throttling for drawing updates (30fps max)
   DateTime _lastDrawingUpdate = DateTime.now();
 
-  void _updateDrawingVisuals(DrawingProvider drawingProvider,
-      {bool force = false}) async {
-    // Throttle updates to max 30fps to prevent UI freeze, unless forced
+  /// Updates all drawing visuals (points, lines, markers) with throttling
+  /// Set [force] to true to bypass throttling for important updates
+  void _updateDrawingVisualsThrottled(
+    DrawingProvider drawingProvider, {
+    bool force = false,
+  }) async {
+    // Throttle to prevent performance issues
     final now = DateTime.now();
     if (!force && now.difference(_lastDrawingUpdate).inMilliseconds < 32) {
       return;
@@ -671,22 +654,32 @@ class MapboxViewState extends State<MapboxView> {
 
     final points = drawingProvider.currentPoints;
 
+    // Handle empty state
     if (points.isEmpty) {
-      _clearDrawingVisuals(keepCenter: true);
+      // Keep center marker for predefined shapes
+      if (drawingProvider.shapeCenter != null &&
+          drawingProvider.currentMode == DrawingMode.predefinedShape) {
+        _updateCenterMarker(drawingProvider);
+      } else {
+        _clearDrawingVisuals();
+      }
       return;
     }
 
-    // Convert to Positions
+    // Convert points to map positions
     _drawingPoints.clear();
     for (final point in points) {
       _drawingPoints.add(Position(point.longitude, point.latitude));
     }
 
-    // Draw points and lines in parallel to save time
+    // Update all visuals in parallel
     await Future.wait([
       _drawPoints(),
       if (_drawingPoints.length >= 2) _drawTempLine(),
     ]);
+
+    // Update center marker
+    await _updateCenterMarker(drawingProvider);
   }
 
   Future<void> _drawPoints() async {
@@ -768,18 +761,6 @@ class MapboxViewState extends State<MapboxView> {
           _centerHandlePosition = null;
         });
       }
-    }
-  }
-
-  void _syncDrawingVisuals(DrawingProvider drawing) {
-    if (drawing.currentPoints.isNotEmpty) {
-      _updateDrawingVisuals(drawing);
-      _updateCenterMarker(drawing);
-    } else if (drawing.shapeCenter != null &&
-        drawing.currentMode == DrawingMode.predefinedShape) {
-      _updateCenterMarker(drawing);
-    } else {
-      _clearDrawingVisuals();
     }
   }
 
@@ -1165,6 +1146,7 @@ class MapboxViewState extends State<MapboxView> {
     _pointManager = null;
     _centerPointManager = null;
     _labelCircleManager = null;
+    _labelTextManager = null;
     super.dispose();
   }
 }
